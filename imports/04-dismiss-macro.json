@@ -1,0 +1,11 @@
+{
+  "name": "Отменить аберрацию",
+  "type": "script",
+  "scope": "global",
+  "img": "icons/magic/death/undead-zombie-grave-green.webp",
+  "command": "if (!globalThis.BoundaryFlesh) { ui.notifications.error('Установите и включите модуль boundary-flesh.'); return; }\nawait BoundaryFlesh.dismiss();",
+  "ownership": {
+    "default": 0
+  },
+  "flags": {}
+}
