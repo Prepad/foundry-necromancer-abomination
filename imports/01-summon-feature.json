@@ -1,7 +1,7 @@
 {
   "name": "Аберрация Пограничной Плоти (5 уровень)",
   "type": "feat",
-  "img": "icons/magic/death/undead-zombie-grave-green.webp",
+  "img": "modules/boundary-flesh/assets/summon-feature.png",
   "system": {
     "identifier": "boundary-flesh-summon",
     "description": {

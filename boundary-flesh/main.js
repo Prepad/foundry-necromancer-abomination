@@ -6,6 +6,34 @@ const state = actor => actor.getFlag(MOD, 'summon');
 const dead = actor => actor.statuses.has('dead') || actor.system.attributes.death?.failure >= 3;
 const fail = error => { console.error(MOD, error); ui.notifications.error(error.message); };
 
+async function refreshSummonArtwork() {
+  const oldImage = 'icons/magic/death/undead-zombie-grave-green.webp';
+  const portrait = `modules/${MOD}/assets/aberration-portrait.png`;
+  const tokenImage = `modules/${MOD}/assets/aberration-token.png`;
+  const featureImage = `modules/${MOD}/assets/summon-feature.png`;
+  const features = [...game.items, ...[...game.actors].flatMap(actor => [...actor.items])];
+  for (const item of features) {
+    if (item.system.identifier === FEATURE && item.img === oldImage) await item.update({img: featureImage});
+  }
+  for (const macro of game.macros) {
+    if (macro.type === 'script' && /BoundaryFlesh\.(summon|dismiss)\(/.test(macro.command) && macro.img === oldImage) {
+      await macro.update({img: featureImage});
+    }
+  }
+  for (const actor of game.actors) {
+    if (actor.getFlag(MOD, 'createdByModule') !== true) continue;
+    const changes = {};
+    if (actor.img === oldImage) changes.img = portrait;
+    if (actor.prototypeToken.texture.src === oldImage) changes['prototypeToken.texture.src'] = tokenImage;
+    if (Object.keys(changes).length) await actor.update(changes);
+  }
+  for (const scene of game.scenes) {
+    const updates = scene.tokens.filter(token => token.getFlag(MOD, 'summon') && token.texture.src === oldImage)
+      .map(token => ({_id: token.id, 'texture.src': tokenImage}));
+    if (updates.length) await scene.updateEmbeddedDocuments('Token', updates);
+  }
+}
+
 function attackBonus(actor) {
   const ability = actor.system.attributes.spellcasting || 'int';
   const data = actor.getRollData();
@@ -150,6 +178,7 @@ async function dismiss() {
 Hooks.once('ready', async()=>{
   globalThis.BoundaryFlesh = {summon,dismiss};
   if (isLeader()) {
+    await refreshSummonArtwork().catch(fail);
     const actors = [...game.actors,...[...game.scenes].flatMap(s=>s.tokens.filter(t=>!t.actorLink).map(t=>t.actor).filter(Boolean))];
     for (const caster of actors) await reconcile(caster).catch(fail);
   }

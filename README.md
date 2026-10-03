@@ -10,4 +10,15 @@ Enable boundary-flesh in Manage Modules. Import the feature and Script macros fr
 The GM selects the necromancer token and runs the summon macro.
 The free summon recovers after a completed long rest.
 
-Module version: 1.0.1. Local checks passed; live Foundry testing pending.
+Module version: 1.0.2. Local checks passed; live Foundry testing pending.
+
+Artwork: the aberration uses a custom portrait and a separate square token image
+from boundary-flesh/assets/. After a GM reloads the updated module, its existing
+summons still using the original built-in image receive the new artwork.
+Custom images selected manually are preserved. Existing manually imported NPC
+templates can be reimported from imports/02-aberration-actor.json.
+
+The feature and summon/dismiss macros use assets/summon-feature.png: a warm sepia
+oil-painting icon matching the supplied reference. Existing features and matching
+macros with the old built-in image also receive the new icon when the GM reloads.
+This local update has not been committed or pushed to GitHub yet.

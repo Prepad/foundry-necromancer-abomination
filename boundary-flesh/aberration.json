@@ -1,7 +1,7 @@
 {
   "name": "Аберрация Пограничной Плоти — шаблон",
   "type": "npc",
-  "img": "icons/magic/death/undead-zombie-grave-green.webp",
+  "img": "modules/boundary-flesh/assets/aberration-portrait.png",
   "system": {
     "abilities": {
       "str": {
@@ -91,7 +91,7 @@
     "width": 1,
     "height": 1,
     "texture": {
-      "src": "icons/magic/death/undead-zombie-grave-green.webp"
+      "src": "modules/boundary-flesh/assets/aberration-token.png"
     },
     "disposition": 1,
     "bar1": {
