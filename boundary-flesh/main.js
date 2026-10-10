@@ -37,8 +37,18 @@ async function refreshSummonArtwork() {
 function attackBonus(actor) {
   const ability = actor.system.attributes.spellcasting || 'int';
   const data = actor.getRollData();
-  const formula = `${actor.system.abilities[ability]?.mod || 0} + ${actor.system.attributes.prof || 0} + (${actor.system.bonuses.msak?.attack || '0'})`;
-  const roll = new Roll(formula, data);
+  let bonus;
+  const modifiers = game.dnd5e?.dataModels?.shared?.D20RollModificationField;
+  if (modifiers && actor.system.rolls?.attack) {
+    // D&D 5e 6 stores actor attack bonuses and conditional rules in roll modifiers.
+    data.mod = actor.system.abilities[ability]?.mod || 0;
+    data.roll = {...data.roll, ability, type:'attack', attack:{classification:'spell', type:'melee'}};
+    bonus = modifiers.combineFields(actor.system, [
+      `abilities.${ability}.attack.roll`, 'rolls.attack', 'rolls.attack.msak'
+    ], {rules:{category:'attack', actor, rollData:data}}).bonus || '0';
+  } else bonus = actor.system.bonuses?.msak?.attack || '0';
+  const formula = `${actor.system.abilities[ability]?.mod || 0} + ${actor.system.attributes.prof || 0} + (${bonus})`;
+  const roll = new foundry.dice.Roll(formula, data);
   if (!roll.isDeterministic) throw Error('Бонус атаки заклинанием содержит кости. Уберите случайный бонус из общего модификатора; добавляйте его в диалоге атаки.');
   return roll.evaluateSync().total;
 }
@@ -65,7 +75,7 @@ async function reconcile(caster) {
   const saved = state(caster);
   if (!saved) return;
   const effect = caster.effects.get(saved.effectId);
-  if (dead(caster) || !effect || effect.disabled || !game.actors.has(saved.actorId)) return cleanup(caster);
+  if (dead(caster) || !effect || effect.disabled || effect.active === false || !game.actors.has(saved.actorId)) return cleanup(caster);
 }
 
 async function syncAttack(caster) {
@@ -79,9 +89,8 @@ async function syncAttack(caster) {
   }
 }
 
-function watchForm(html, action, describe) {
-  const root = html[0];
-  const button = root.querySelector(`[data-button="${action}"]`);
+function watchForm(root, action, describe) {
+  const button = root.querySelector(`button[data-action="${action}"]`);
   const update = () => {
     try {
       const {text, valid} = describe(root);
@@ -121,41 +130,44 @@ function chooseSlots(actor, free, previous) {
     slotUpdates(actor, plan.spent);
     return plan;
   };
-  return new Promise(resolve => new Dialog({
-    title: 'Аберрация — шаг 1 из 2: жертва ячеек',
-    content: `<form><p>${free ? 'Бесплатный призыв доступен.' : 'Бесплатный призыв израсходован: оплата одной ячейкой.'} Бесплатный призыв восстанавливается после долгого отдыха.</p>${free ? '' : `<label>Ячейка для оплаты призыва <select name="payment">${options}</select></label>`}<p>Каждая пожертвованная ячейка даёт очки по своему уровню: 1-й — 1 очко, 2-й — 2, 3-й — 3 и так далее. Ячейка для оплаты повторного призыва очков не даёт.</p><table><tr><th>Ячейки</th><th>Доступно</th><th>Очков за ячейку</th><th>Пожертвовать</th></tr>${rows}</table><p data-summary aria-live="polite"></p><p>Ячейки будут списаны только после подтверждения призыва на втором шаге.</p></form>`,
-    render:html => watchForm(html, 'next', root => {
+  return foundry.applications.api.DialogV2.wait({
+    window:{title:'Аберрация — шаг 1 из 2: жертва ячеек'},
+    position:{width:600},
+    content: `<div><p>${free ? 'Бесплатный призыв доступен.' : 'Бесплатный призыв израсходован: оплата одной ячейкой.'} Бесплатный призыв восстанавливается после долгого отдыха.</p>${free ? '' : `<label>Ячейка для оплаты призыва <select name="payment">${options}</select></label>`}<p>Каждая пожертвованная ячейка даёт очки по своему уровню: 1-й — 1 очко, 2-й — 2, 3-й — 3 и так далее. Ячейка для оплаты повторного призыва очков не даёт.</p><table><tr><th>Ячейки</th><th>Доступно</th><th>Очков за ячейку</th><th>Пожертвовать</th></tr>${rows}</table><p data-summary aria-live="polite"></p><p>Ячейки будут списаны только после подтверждения призыва на втором шаге.</p></div>`,
+    render:(event,dialog) => watchForm(dialog.element, 'next', root => {
       const plan = budget(read(root));
       return {text:`Очков усиления: ${plan.points}. Всего будет списано ячеек: ${Object.values(plan.spent).reduce((sum,value) => sum + value, 0)}.`, valid:true};
     }),
-    buttons:{next:{label:'Далее: распределить очки', callback:html => {
+    buttons:[{action:'next', default:true, label:'Далее: распределить очки', callback:async (event,button,dialog) => {
       try {
-        const answer = read(html[0]);
+        const answer = read(dialog.element);
         budget(answer);
-        resolve(answer);
-      } catch(error) { ui.notifications.warn(error.message); resolve(null); }
-    }}, cancel:{label:'Отмена', callback:() => resolve(null)}},
-    default:'next', close:() => resolve(null)
-  }, {width:600}).render(true));
+        return answer;
+      } catch(error) { ui.notifications.warn(error.message); return false; }
+    }}, {action:'cancel', label:'Отмена', callback:async () => false}],
+    rejectClose:false
+  });
 }
 
 function distributePoints(points, bonus, previous) {
   const stats = [['damage', 'Урон: +1d6'], ['armor', 'КД: +2'], ['health', 'ХП: +15']];
   const rows = stats.map(([stat,label]) => `<tr><td>${label}</td><td><input aria-label="${label}" name="${stat}" type="number" min="0" max="${points}" step="1" value="${foundry.utils.escapeHTML(String(previous[stat]))}" style="width:75px"></td></tr>`).join('');
   const read = root => Object.fromEntries(stats.map(([stat]) => [stat,root.querySelector(`[name="${stat}"]`).value]));
-  return new Promise(resolve => new Dialog({
-    title: 'Аберрация — шаг 2 из 2: распределение очков',
-    content:`<form><p>Доступно очков усиления: <strong>${points}</strong>. Распределите все очки. Одно очко даёт одну из прибавок; усиления суммируются.</p><table><tr><th>Прибавка за очко</th><th>Потратить очков</th></tr>${rows}</table><p data-summary aria-live="polite"></p><p>Атака заклинателя: ${bonus >= 0 ? '+' : ''}${bonus}.</p><p>Токен появится справа от заклинателя; переместите его в согласованное с мастером место. Дальность призыва правилами не указана.</p><p>Призыв занимает действие. Аберрация может действовать сразу.</p></form>`,
-    render:html => watchForm(html, 'summon', root => {
+  return foundry.applications.api.DialogV2.wait({
+    window:{title:'Аберрация — шаг 2 из 2: распределение очков'},
+    position:{width:600},
+    content:`<div><p>Доступно очков усиления: <strong>${points}</strong>. Распределите все очки. Одно очко даёт одну из прибавок; усиления суммируются.</p><table><tr><th>Прибавка за очко</th><th>Потратить очков</th></tr>${rows}</table><p data-summary aria-live="polite"></p><p>Атака заклинателя: ${bonus >= 0 ? '+' : ''}${bonus}.</p><p>Токен появится справа от заклинателя; переместите его в согласованное с мастером место. Дальность призыва правилами не указана.</p><p>Призыв занимает действие. Аберрация может действовать сразу.</p></div>`,
+    render:(event,dialog) => watchForm(dialog.element, 'summon', root => {
       const plan = allocatePoints(points, read(root), {complete:false});
       return {text:`Осталось очков: ${plan.remaining}. Итог: КД ${plan.ac}, ХП ${plan.hp}, урон ${plan.dice}d6.`, valid:plan.remaining === 0};
     }),
-    buttons:{summon:{label:'Призвать', callback:html => {
-      try { resolve({boosts:allocatePoints(points, read(html[0])).boosts}); }
-      catch(error) { ui.notifications.warn(error.message); resolve(null); }
-    }}, back:{label:'Назад: выбрать ячейки', callback:html => resolve({back:true, boosts:read(html[0])})}, cancel:{label:'Отмена', callback:() => resolve(null)}},
-    default:'summon', close:() => resolve(null)
-  }, {width:600}).render(true));
+    buttons:[{action:'summon', default:true, label:'Призвать', callback:async (event,button,dialog) => {
+      try { return {boosts:allocatePoints(points, read(dialog.element)).boosts}; }
+      catch(error) { ui.notifications.warn(error.message); return false; }
+    }}, {action:'back', label:'Назад: выбрать ячейки', callback:async (event,button,dialog) => ({back:true, boosts:read(dialog.element)})},
+    {action:'cancel', label:'Отмена', callback:async () => false}],
+    rejectClose:false
+  });
 }
 
 async function form(actor, free, bonus) {
@@ -207,25 +219,27 @@ async function summon() {
     data.ownership = foundry.utils.deepClone(caster.ownership);
     data.flags = {[MOD]:{createdByModule:true,caster:caster.uuid,boosts:plan.boosts}};
     data.system.attributes.ac.flat = plan.ac;
+    data.system.attributes.ac.override = plan.ac;
     data.system.attributes.hp.value = data.system.attributes.hp.max = plan.hp;
     data.system.traits.languages = foundry.utils.deepClone(caster.system.traits.languages);
     data.system.details.biography.value += '<p>Понимает языки заклинателя, но не говорит.</p>';
     const attack = data.items[0].system.activities[ATTACK];
     attack.attack.bonus = String(attackBonus(caster));
     attack.damage.parts[0].number = plan.dice;
-    created = await Actor.create(data);
+    created = await CONFIG.Actor.documentClass.create(data);
     const activity = feature.system.activities.get(CAST);
     if (!activity) throw Error('Нет активности призыва. Повторно импортируйте особенность.');
     effect = await caster.beginConcentrating(activity,{duration:{},flags:{[MOD]:{summonActor:created.id}}});
     if (!effect) throw Error('Создание концентрации отменено.');
     const tokenData = await created.getTokenDocument({
       x:Math.min(token.document.x + token.document.width * canvas.grid.size,canvas.dimensions.sceneX + canvas.dimensions.sceneWidth - canvas.grid.size),
-      y:token.document.y,actorLink:true,
+      y:token.document.y, elevation:token.document.elevation ?? 0, actorLink:true,
+      ...(token.document.level !== undefined ? {level:token.document.level} : {}),
       flags:{[MOD]:{summon:{caster:caster.uuid,actorId:created.id}}}
     });
     [placed] = await canvas.scene.createEmbeddedDocuments('Token',[tokenData.toObject()]);
     if (!placed) throw Error('Не удалось создать токен.');
-    if (dead(caster) || state(caster) || !caster.effects.has(effect.id) || effect.disabled) throw Error('Состояние заклинателя изменилось. Повторите призыв.');
+    if (dead(caster) || state(caster) || !caster.effects.has(effect.id) || effect.disabled || effect.active === false) throw Error('Состояние заклинателя изменилось. Повторите призыв.');
     if (freeAvailable(caster.getFlag(MOD,'freeUsed'),caster.getFlag(MOD,'lastFree')) !== free) throw Error('Доступность бесплатного призыва изменилась. Повторите призыв.');
     if (planCosts(caster,answer.rows,answer.paidSlot,free).points !== plan.points) throw Error('Уровень пожертвованных ячеек изменился. Повторите призыв.');
     const updates = slotUpdates(caster,plan.spent);

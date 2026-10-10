@@ -1,11 +1,11 @@
 {
   "id": "boundary-flesh",
   "title": "Аберрация Пограничной Плоти",
-  "description": "Призыв и усиления для Foundry 13 / D&D 5e 5.2.4.",
-  "version": "1.0.3",
+  "description": "Призыв и усиления для Foundry 13–14 / D&D 5e 5.2.4–6.0.6.",
+  "version": "1.0.4",
   "compatibility": {
-    "minimum": "13",
-    "verified": "13"
+    "minimum": "13.347",
+    "verified": "14"
   },
   "relationships": {
     "systems": [
@@ -14,7 +14,8 @@
         "type": "system",
         "compatibility": {
           "minimum": "5.2.4",
-          "maximum": "5.2.4"
+          "verified": "6.0.6",
+          "maximum": "6.0.6"
         }
       }
     ]
@@ -29,5 +30,5 @@
   ],
   "url": "https://github.com/Prepad/foundry-necromancer-abomination",
   "manifest": "https://raw.githubusercontent.com/Prepad/foundry-necromancer-abomination/main/module.json",
-  "download": "https://raw.githubusercontent.com/Prepad/foundry-necromancer-abomination/main/dist/v1.0.3/boundary-flesh-module.zip"
+  "download": "https://raw.githubusercontent.com/Prepad/foundry-necromancer-abomination/main/dist/v1.0.4/boundary-flesh-module.zip"
 }

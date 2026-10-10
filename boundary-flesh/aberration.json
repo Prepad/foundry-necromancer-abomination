@@ -33,7 +33,10 @@
       "ac": {
         "flat": 13,
         "calc": "flat",
-        "formula": ""
+        "formula": "",
+        "override": 13,
+        "calcs": [],
+        "formulas": []
       },
       "hp": {
         "value": 30,

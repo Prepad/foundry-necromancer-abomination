@@ -1,6 +1,15 @@
 # Foundry necromancer abomination
 
-Foundry VTT 13 / D&D 5e 5.2.4.
+Supported configurations (module version 1.0.4):
+
+| Foundry VTT | D&D 5e |
+| --- | --- |
+| 13.347+ | 5.2.4, 5.3.3 |
+| 14 | 5.3.3, 6.0.6 |
+
+D&D 5e 6.0.6 requires Foundry 14.367 or later. The system's own compatibility
+requirements still apply; see the [official D&D 5e package](https://foundryvtt.com/packages/dnd5e/)
+and [6.0.6 manifest](https://github.com/foundryvtt/dnd5e/blob/release-6.0.6/system.json).
 
 Install via Setup > Add-on Modules > Install Module > Manifest URL:
 
@@ -24,7 +33,14 @@ Summoning has two steps:
 Reimport imports/01-summon-feature.json to update the feature's rules text.
 An existing feature with the original identifier still works with the updated module.
 
-Module version: 1.0.3. Local checks passed; live Foundry testing pending.
+Version 1.0.4 uses DialogV2 on both Foundry generations. It supports the D&D 5e 6
+armor-class override and attack modifier fields, including actor conditional rules.
+Summoned tokens inherit the caster's elevation and, on Foundry 14, scene level.
+
+The compatibility review used the official Foundry 13/14 API documentation and
+D&D 5e 5.2.4, 5.3.3 and 6.0.6 source. All 36 rules and simulated Foundry/dialog
+checks passed; live Foundry testing is pending. The fixtures model the relevant
+API contracts and do not run Foundry or the D&D 5e data models themselves.
 
 Run the rules and simulated Foundry/dialog checks with Node.js:
 
