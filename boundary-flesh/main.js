@@ -1,4 +1,4 @@
-import {MOD, FEATURE, ATTACK, CAST, freeAvailable, planCosts, slotUpdates} from './rules.js';
+import {MOD, FEATURE, ATTACK, CAST, freeAvailable, slotLevel, planCosts, allocatePoints, slotUpdates} from './rules.js';
 
 const working = new Set();
 const isLeader = () => game.user.isGM && game.users.activeGM?.id === game.user.id;
@@ -79,20 +79,98 @@ async function syncAttack(caster) {
   }
 }
 
-function form(actor, free, bonus) {
+function watchForm(html, action, describe) {
+  const root = html[0];
+  const button = root.querySelector(`[data-button="${action}"]`);
+  const update = () => {
+    try {
+      const {text, valid} = describe(root);
+      root.querySelector('[data-summary]').textContent = text;
+      button.disabled = !valid;
+    } catch (error) {
+      root.querySelector('[data-summary]').textContent = error.message;
+      button.disabled = true;
+    }
+  };
+  root.addEventListener('input', update);
+  root.addEventListener('change', update);
+  root.querySelector('form').addEventListener('submit', event => event.preventDefault());
+  // Keep Enter subject to the same validation as the visible button.
+  root.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    update();
+    button.click();
+  }, true);
+  update();
+}
+
+function chooseSlots(actor, free, previous) {
   const slots = Object.entries(actor.system.spells).filter(([key,s]) => /^(spell[1-9]|pact)$/.test(key) && s.max > 0);
-  const escape = foundry.utils.escapeHTML;
-  const options = slots.map(([key,s]) => `<option value="${key}">${escape(key)}: ${s.value}/${s.max}</option>`).join('');
-  const rows = slots.map(([key,s]) => `<tr><td>${escape(key)} (${s.value})</td>${['damage','armor','health'].map(stat=>`<td><input name="${key}-${stat}" type="number" min="0" step="1" value="0" style="width:65px"></td>`).join('')}</tr>`).join('');
+  const label = key => key === 'pact' ? `Договор, ${slotLevel(actor, key)} ур.` : `${slotLevel(actor, key)} ур.`;
+  const options = slots.filter(([,s]) => s.value > 0).map(([key,s]) => `<option value="${key}" ${previous.paidSlot === key ? 'selected' : ''}>${label(key)}: ${s.value}/${s.max}</option>`).join('');
+  const rows = slots.map(([key,s]) => {
+    const value = previous.rows.find(row => row.key === key)?.count ?? 0;
+    return `<tr><td>${label(key)}</td><td>${s.value}/${s.max}</td><td>${slotLevel(actor, key)}</td><td><input aria-label="Пожертвовать ячейки: ${label(key)}" name="${key}-count" type="number" min="0" max="${s.value}" step="1" value="${foundry.utils.escapeHTML(String(value))}" style="width:75px"></td></tr>`;
+  }).join('');
+  const read = root => ({rows: slots.map(([key]) => ({key, count:root.querySelector(`[name="${key}-count"]`).value})), paidSlot:root.querySelector('[name="payment"]')?.value});
+  const budget = answer => {
+    if (!free && !answer.paidSlot) throw Error('Нет доступных ячеек для оплаты призыва.');
+    const plan = planCosts(actor, answer.rows, answer.paidSlot, free);
+    slotUpdates(actor, plan.spent);
+    return plan;
+  };
   return new Promise(resolve => new Dialog({
-    title: 'Аберрация Пограничной Плоти — призыв',
-    content: `<form><p>${free ? 'Бесплатный призыв доступен.' : 'Бесплатный призыв израсходован: оплата одной ячейкой.'}</p><p>Бесплатный призыв восстанавливается после долгого отдыха.</p>${free ? '' : `<label>Ячейка для оплаты призыва <select name="payment">${options}</select></label>`}<p>Каждая ячейка независимо от уровня даёт одно усиление. Оплата повторного призыва сама усиления не даёт.</p><table><tr><th>Ячейки</th><th>+1d6</th><th>+2 КД</th><th>+15 ХП</th></tr>${rows}</table><p>Атака заклинателя: ${bonus >= 0 ? '+' : ''}${bonus}.</p><p>Токен появится справа от заклинателя; переместите его в согласованное с мастером место. Дальность призыва правилами не указана.</p><p>Призыв занимает действие. Аберрация может действовать сразу.</p></form>`,
-    buttons: {summon:{label:'Призвать',callback:html=>{
-      const root = html[0];
-      resolve({rows:slots.map(([key])=>({key,...Object.fromEntries(['damage','armor','health'].map(stat=>[stat,root.querySelector(`[name="${key}-${stat}"]`).value]))})),paidSlot:root.querySelector('[name="payment"]')?.value});
-    }},cancel:{label:'Отмена',callback:()=>resolve(null)}},
-    default:'summon',close:()=>resolve(null)
-  },{width:560}).render(true));
+    title: 'Аберрация — шаг 1 из 2: жертва ячеек',
+    content: `<form><p>${free ? 'Бесплатный призыв доступен.' : 'Бесплатный призыв израсходован: оплата одной ячейкой.'} Бесплатный призыв восстанавливается после долгого отдыха.</p>${free ? '' : `<label>Ячейка для оплаты призыва <select name="payment">${options}</select></label>`}<p>Каждая пожертвованная ячейка даёт очки по своему уровню: 1-й — 1 очко, 2-й — 2, 3-й — 3 и так далее. Ячейка для оплаты повторного призыва очков не даёт.</p><table><tr><th>Ячейки</th><th>Доступно</th><th>Очков за ячейку</th><th>Пожертвовать</th></tr>${rows}</table><p data-summary aria-live="polite"></p><p>Ячейки будут списаны только после подтверждения призыва на втором шаге.</p></form>`,
+    render:html => watchForm(html, 'next', root => {
+      const plan = budget(read(root));
+      return {text:`Очков усиления: ${plan.points}. Всего будет списано ячеек: ${Object.values(plan.spent).reduce((sum,value) => sum + value, 0)}.`, valid:true};
+    }),
+    buttons:{next:{label:'Далее: распределить очки', callback:html => {
+      try {
+        const answer = read(html[0]);
+        budget(answer);
+        resolve(answer);
+      } catch(error) { ui.notifications.warn(error.message); resolve(null); }
+    }}, cancel:{label:'Отмена', callback:() => resolve(null)}},
+    default:'next', close:() => resolve(null)
+  }, {width:600}).render(true));
+}
+
+function distributePoints(points, bonus, previous) {
+  const stats = [['damage', 'Урон: +1d6'], ['armor', 'КД: +2'], ['health', 'ХП: +15']];
+  const rows = stats.map(([stat,label]) => `<tr><td>${label}</td><td><input aria-label="${label}" name="${stat}" type="number" min="0" max="${points}" step="1" value="${foundry.utils.escapeHTML(String(previous[stat]))}" style="width:75px"></td></tr>`).join('');
+  const read = root => Object.fromEntries(stats.map(([stat]) => [stat,root.querySelector(`[name="${stat}"]`).value]));
+  return new Promise(resolve => new Dialog({
+    title: 'Аберрация — шаг 2 из 2: распределение очков',
+    content:`<form><p>Доступно очков усиления: <strong>${points}</strong>. Распределите все очки. Одно очко даёт одну из прибавок; усиления суммируются.</p><table><tr><th>Прибавка за очко</th><th>Потратить очков</th></tr>${rows}</table><p data-summary aria-live="polite"></p><p>Атака заклинателя: ${bonus >= 0 ? '+' : ''}${bonus}.</p><p>Токен появится справа от заклинателя; переместите его в согласованное с мастером место. Дальность призыва правилами не указана.</p><p>Призыв занимает действие. Аберрация может действовать сразу.</p></form>`,
+    render:html => watchForm(html, 'summon', root => {
+      const plan = allocatePoints(points, read(root), {complete:false});
+      return {text:`Осталось очков: ${plan.remaining}. Итог: КД ${plan.ac}, ХП ${plan.hp}, урон ${plan.dice}d6.`, valid:plan.remaining === 0};
+    }),
+    buttons:{summon:{label:'Призвать', callback:html => {
+      try { resolve({boosts:allocatePoints(points, read(html[0])).boosts}); }
+      catch(error) { ui.notifications.warn(error.message); resolve(null); }
+    }}, back:{label:'Назад: выбрать ячейки', callback:html => resolve({back:true, boosts:read(html[0])})}, cancel:{label:'Отмена', callback:() => resolve(null)}},
+    default:'summon', close:() => resolve(null)
+  }, {width:600}).render(true));
+}
+
+async function form(actor, free, bonus) {
+  let selection = {rows:[], paidSlot:undefined};
+  let boosts = {damage:0, armor:0, health:0};
+  for (;;) {
+    const chosen = await chooseSlots(actor, free, selection);
+    if (!chosen) return null;
+    selection = chosen;
+    const {points} = planCosts(actor, selection.rows, selection.paidSlot, free);
+    const allocation = await distributePoints(points, bonus, boosts);
+    if (!allocation) return null;
+    boosts = allocation.boosts;
+    if (!allocation.back) return {...selection, boosts, points};
+  }
 }
 
 async function summon() {
@@ -118,8 +196,10 @@ async function summon() {
     if (dead(caster) || state(caster)) throw Error('Состояние заклинателя изменилось. Повторите призыв.');
     const stillFree = freeAvailable(caster.getFlag(MOD,'freeUsed'),caster.getFlag(MOD,'lastFree'));
     if (stillFree !== free) throw Error('Доступность бесплатного призыва изменилась. Повторите призыв.');
-    const plan = planCosts(answer.rows,answer.paidSlot,free);
-    const updates = slotUpdates(caster,plan.spent);
+    const budget = planCosts(caster,answer.rows,answer.paidSlot,free);
+    if (budget.points !== answer.points) throw Error('Уровень пожертвованных ячеек изменился. Повторите призыв.');
+    const plan = {...budget,...allocatePoints(budget.points,answer.boosts)};
+    slotUpdates(caster,plan.spent);
     const response = await fetch(`modules/${MOD}/aberration.json`);
     if (!response.ok) throw Error('Не удалось загрузить шаблон аберрации из модуля.');
     const data = await response.json();
@@ -145,6 +225,10 @@ async function summon() {
     });
     [placed] = await canvas.scene.createEmbeddedDocuments('Token',[tokenData.toObject()]);
     if (!placed) throw Error('Не удалось создать токен.');
+    if (dead(caster) || state(caster) || !caster.effects.has(effect.id) || effect.disabled) throw Error('Состояние заклинателя изменилось. Повторите призыв.');
+    if (freeAvailable(caster.getFlag(MOD,'freeUsed'),caster.getFlag(MOD,'lastFree')) !== free) throw Error('Доступность бесплатного призыва изменилась. Повторите призыв.');
+    if (planCosts(caster,answer.rows,answer.paidSlot,free).points !== plan.points) throw Error('Уровень пожертвованных ячеек изменился. Повторите призыв.');
+    const updates = slotUpdates(caster,plan.spent);
     await caster.update({...updates,[`flags.${MOD}.summon`]:{actorId:created.id,effectId:effect.id},...(free ? {[`flags.${MOD}.freeUsed`]:true} : {})});
     charged = true;
     // Replace prior concentration only after the new summon has been committed.
